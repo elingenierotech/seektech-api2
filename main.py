@@ -15,13 +15,6 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Opciones para yt-dlp
-YDL_OPTS = {
-    'quiet': True,
-    'no_warnings': True,
-    'extract_flat': True,
-}
-
 @app.get("/search")
 async def search_songs(q: str = Query(..., description="Término de búsqueda")):
     try:
@@ -56,48 +49,35 @@ async def search_songs(q: str = Query(..., description="Término de búsqueda"))
 
 @app.get("/stream")
 async def get_stream(video_id: str = Query(..., description="ID del video de YouTube")):
-    """Devuelve la URL del audio"""
     try:
         url = f"https://www.youtube.com/watch?v={video_id}"
         ydl_opts = {
             'quiet': True,
             'format': 'bestaudio/best',
-            'extract_flat': False,
         }
         
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             info = ydl.extract_info(url, download=False)
             
-            # Buscar el mejor audio
             audio_url = None
             if 'url' in info:
                 audio_url = info['url']
             elif 'formats' in info:
-                # Priorizar audio opus o m4a
                 for f in info['formats']:
                     if f.get('acodec') != 'none' and f.get('vcodec') == 'none':
-                        if f.get('ext') in ['m4a', 'opus', 'webm']:
-                            audio_url = f['url']
-                            break
-                if not audio_url:
-                    for f in info['formats']:
-                        if f.get('acodec') != 'none' and f.get('vcodec') == 'none':
-                            audio_url = f['url']
-                            break
+                        audio_url = f['url']
+                        break
             
             if audio_url:
-                return JSONResponse(content={'stream_url': audio_url, 'success': True})
+                return JSONResponse(content={'stream_url': audio_url})
             else:
-                return JSONResponse(content={'error': 'No se encontró audio', 'success': False}, status_code=404)
+                return JSONResponse(content={'error': 'No se encontró audio'}, status_code=404)
     except Exception as e:
-        error_msg = str(e)
-        if 'Video unavailable' in error_msg:
-            return JSONResponse(content={'error': 'Video no disponible', 'success': False}, status_code=403)
-        return JSONResponse(content={'error': error_msg, 'success': False}, status_code=500)
+        return JSONResponse(content={'error': str(e)}, status_code=500)
 
 @app.get("/proxy-stream")
 async def proxy_stream(video_id: str = Query(..., description="ID del video de YouTube")):
-    """Transmite el audio directamente (soluciona problemas de CORS)"""
+    """Transmite el audio directamente desde YouTube"""
     try:
         # Primero obtener la URL del audio
         url = f"https://www.youtube.com/watch?v={video_id}"
