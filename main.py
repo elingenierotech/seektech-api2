@@ -1,9 +1,9 @@
-from fastapi import FastAPI, Query, Response
+from fastapi import FastAPI, Query
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi.responses import JSONResponse
 import yt_dlp
 import os
-import requests
+import tempfile
 
 app = FastAPI(title="SEEK_TECH API")
 
@@ -15,14 +15,32 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Obtener cookies desde variable de entorno
+COOKIES = os.environ.get("COOKIES", "")
+
+def get_ydl_opts(extract_flat=True):
+    opts = {
+        'quiet': True,
+        'no_warnings': True,
+        'extract_flat': extract_flat,
+    }
+    
+    # Si hay cookies, guardarlas en un archivo temporal
+    if COOKIES:
+        try:
+            with tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False) as f:
+                f.write(COOKIES)
+                opts['cookiefile'] = f.name
+        except Exception as e:
+            print(f"Error al guardar cookies: {e}")
+    
+    return opts
+
 @app.get("/search")
 async def search_songs(q: str = Query(..., description="Término de búsqueda")):
     try:
-        ydl_opts = {
-            'quiet': True,
-            'extract_flat': True,
-            'playlistend': 10
-        }
+        ydl_opts = get_ydl_opts(True)
+        ydl_opts['playlistend'] = 10
         
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             search_query = f"ytsearch10:{q}"
@@ -51,10 +69,8 @@ async def search_songs(q: str = Query(..., description="Término de búsqueda"))
 async def get_stream(video_id: str = Query(..., description="ID del video de YouTube")):
     try:
         url = f"https://www.youtube.com/watch?v={video_id}"
-        ydl_opts = {
-            'quiet': True,
-            'format': 'bestaudio/best',
-        }
+        ydl_opts = get_ydl_opts(False)
+        ydl_opts['format'] = 'bestaudio/best'
         
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             info = ydl.extract_info(url, download=False)
@@ -70,41 +86,6 @@ async def get_stream(video_id: str = Query(..., description="ID del video de You
             
             if audio_url:
                 return JSONResponse(content={'stream_url': audio_url})
-            else:
-                return JSONResponse(content={'error': 'No se encontró audio'}, status_code=404)
-    except Exception as e:
-        return JSONResponse(content={'error': str(e)}, status_code=500)
-
-@app.get("/proxy-stream")
-async def proxy_stream(video_id: str = Query(..., description="ID del video de YouTube")):
-    """Transmite el audio directamente desde YouTube"""
-    try:
-        # Primero obtener la URL del audio
-        url = f"https://www.youtube.com/watch?v={video_id}"
-        ydl_opts = {
-            'quiet': True,
-            'format': 'bestaudio/best',
-            'extract_flat': False,
-        }
-        
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            info = ydl.extract_info(url, download=False)
-            
-            audio_url = None
-            if 'formats' in info:
-                for f in info['formats']:
-                    if f.get('acodec') != 'none' and f.get('vcodec') == 'none':
-                        audio_url = f['url']
-                        break
-            
-            if audio_url:
-                # Descargar y transmitir el audio
-                response = requests.get(audio_url, stream=True)
-                return StreamingResponse(
-                    response.iter_content(chunk_size=8192),
-                    media_type="audio/mpeg",
-                    headers={"Content-Disposition": f"inline; filename={video_id}.mp3"}
-                )
             else:
                 return JSONResponse(content={'error': 'No se encontró audio'}, status_code=404)
     except Exception as e:
